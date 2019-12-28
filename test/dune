@@ -1,0 +1,4 @@
+(test
+ (name test_type)
+ (package generics)
+ (libraries generics fmt alcotest))

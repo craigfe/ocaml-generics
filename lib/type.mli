@@ -36,18 +36,30 @@ val list : 'a t -> 'a list t
 
 (** Record generic constructors *)
 
-type ('a, 'b) field
+type ('record, 'field) field
 
-type ('a, 'b, 'c) open_record
+type ('record, 'cons, 'remaining, 'lenses, 'lens_nil) open_record
 
-val field : string -> 'a t -> ('b -> 'a) -> ('b, 'a) field
+val field : string -> 'field t -> ('record -> 'field) -> ('record, 'field) field
 
-val sealr : ('a, 'b, 'a) open_record -> 'a t
+val sealr : ('record, 'cons, 'record, 'lens, unit) open_record -> 'record t
+
+val sealr_lens :
+  ('record, 'cons, 'record, 'lens, unit) open_record ->
+  'record t * 'lens Optic.t_list
 
 val ( |+ ) :
-  ('a, 'b, 'c -> 'd) open_record -> ('a, 'c) field -> ('a, 'b, 'd) open_record
+  ( 'record,
+    'cons,
+    'field -> 'remaining_fields,
+    'lens,
+    ('record, 'field, ('z * 'z)) Optic.mono * 'lens_nil )
+  open_record ->
+  ('record, 'field) field ->
+  ('record, 'cons, 'remaining_fields, 'lens, 'lens_nil) open_record
 
-val record : string -> 'b -> ('a, 'b, 'b) open_record
+val record :
+  string -> 'record -> ('a, 'record, 'record, 'lens_nil, 'lens_nil) open_record
 
 (** Variant generic constructors *)
 

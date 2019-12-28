@@ -156,3 +156,25 @@ end = struct
     in
     (meta, fst (aux s node))
 end
+
+(* Testing *)
+
+(* type 'a homo_store = unit
+ * 
+ * let hs : 'a Type.t -> 'a homo_store Type.t = undefined *)
+
+(* type hetero_store = {
+ *   name : string homo_store;
+ *   tmp : bytes homo_store;
+ *   context : int homo_store;
+ * } *)
+
+type hetero_store = { name : string; tmp : bytes; context : int }
+
+let _either : hetero_store Type.t =
+  let open Type in
+  record "either" (fun name tmp context -> { name; tmp; context })
+  |+ field "name" string (fun s -> s.name)
+  |+ field "tmp" bytes (fun s -> s.tmp)
+  |+ field "context" int (fun s -> s.context)
+  |> sealr
