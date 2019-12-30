@@ -46,14 +46,14 @@ val sealr : ('record, 'cons, 'record, 'lens, unit) open_record -> 'record t
 
 val sealr_lens :
   ('record, 'cons, 'record, 'lens, unit) open_record ->
-  'record t * 'lens Optic.t_list
+  'record t * 'lens Optics.Lens.t_list
 
 val ( |+ ) :
   ( 'record,
     'cons,
     'field -> 'remaining_fields,
     'lens,
-    ('record, 'field, ('z * 'z)) Optic.mono * 'lens_nil )
+    ('record, 'field) Optics.Lens.mono * 'lens_nil )
   open_record ->
   ('record, 'field) field ->
   ('record, 'cons, 'remaining_fields, 'lens, 'lens_nil) open_record

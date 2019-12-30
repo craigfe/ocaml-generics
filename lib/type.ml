@@ -1,3 +1,5 @@
+open Optics
+
 let undefined _ =
   let exception Undefined in
   raise Undefined
@@ -27,7 +29,7 @@ and ('a, _, 'lens, _) fields =
   | F0 : ('a, 'a, 'lens, 'lens) fields
   | F1 :
       ('a, 'b) field * ('a, 'c, 'lens, 'lens_nil) fields
-      -> ('a, 'b -> 'c, ('a, 'b, ('z * 'z)) Optic.mono * 'lens, 'lens_nil) fields
+      -> ('a, 'b -> 'c, ('a, 'b) Lens.mono * 'lens, 'lens_nil) fields
       (** We need to accumulate two variants of 'type-level list' here...
           Without higher-kinded type operators, we must explicitly accumulate
           all types that we will need here (otherwise, we could express as
@@ -59,16 +61,16 @@ and ('a, _, 'lens, _) fields =
           and [string], the type parameters are as follows:
 
           {[
-            ('a, 'b, 'c)  =  ( foo ,       ->          ,           *           )
-                                          /  \                   /   \
-                                         /    \                 /     \
-                                        /      \               /       \
-                                      int      ->        (foo, int)     *
-                                              /  \       Lens.mono    /   \
-                                             /    \                  /     \
-                                            /      \                /       \
-                                         string    foo       (foo, string)  unit
-                                                               Lens.mono
+            ('a, 'b, 'c)  =  (foo,     ->         ,          *      , 'd)
+                                      /  \                 /   \
+                                     /    \               /     \
+                                    /      \             /       \
+                                  int      ->     (foo, int)     *
+                                          /  \     Lens.mono    /   \
+                                         /    \                /     \
+                                        /      \              /       \
+                                     string    foo     (foo, string)  'd
+                                                         Lens.mono
           ]} *)
 
 and (-'record, 'field) field = {
@@ -100,7 +102,7 @@ and ('a, 'b) case1 = {
   c1 : 'b -> 'a;
 }
 
-(* Polymorphic map over fields over a record. Sadly, without higher-order type,
+(* Polymorphic map over fields over a record. Sadly, without higher-kinded types
    we have to hand implement each one. *)
 type ('record, 'out) polyf = { f_field : 'a. ('record, 'a) field -> 'out }
 
@@ -159,10 +161,10 @@ let ( |~ ) v c cs =
 (* Records *)
 
 module Unwitnessed_record = struct
-  type ('record, 'cons, 'list, 'list_nil) t = {
+  type ('record, 'cons, 'lens, 'lens_nil) t = {
     name : string;
     cons : 'cons;
-    fields : ('record, 'cons, 'list, 'list_nil) fields;
+    fields : ('record, 'cons, 'lens, 'lens_nil) fields;
   }
 
   let v name cons fields = { name; cons; fields }
@@ -185,7 +187,7 @@ let record : type r. string -> r -> ('a, r, r, 'lens_nil, 'lens_nil) open_record
 
 let app :
     type r c ft rem lens lens_nil.
-    (r, c, ft -> rem, lens, (r, ft, _) Optic.mono * lens_nil) open_record ->
+    (r, c, ft -> rem, lens, (r, ft) Lens.mono * lens_nil) open_record ->
     (r, ft) field ->
     (r, c, rem, lens, lens_nil) open_record =
  fun { open_record = previous } field ->
@@ -205,21 +207,21 @@ let sealr : type a b. (a, b, a, _, _) open_record -> a t =
   let rwit = Witness.make () in
   Record { rwit; rname = name; rfields = Fields (fields, cons) }
 
-(* Ground function difference list with [record] and lens list with [unit] *)
+(* Ground constructor difference list with [record] and lens list with [unit] *)
 let sealr_lens :
     type record cons lens.
     (record, cons, record, lens, unit) open_record ->
-    record t * lens Optic.t_list =
+    record t * lens Lens.t_list =
  fun { open_record = r } ->
   let Unwitnessed_record.{ name; cons; fields } = r F0 in
   let rwit = Witness.make () in
   let lenses =
-    let open Optic in
-    let rec inner : type a l. (record, a, l, unit) fields -> l Optic.t_list =
+    let open Lens in
+    let rec inner : type a l. (record, a, l, unit) fields -> l Lens.t_list =
       function
       | F0 -> []
       | F1 ({ fget; _ }, fs) ->
-          let ml = Optic.lens fget (fun _ _ -> assert false) in
+          let ml = Lens.v fget (fun _ _ -> assert false) in
           ml :: inner fs
     in
     inner fields
