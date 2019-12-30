@@ -1,16 +1,25 @@
-## Irmin Store RFC
+# RFC - Heterogeneous Irmin stores via Effectful Optics
 
-### Problems with Irmin at present
+## Problems with Irmin at present
 
-There are two common issues that arise when using the current Irmin API, both
-related to so-called '*path-dependent serialisation*', whereby the location of a
-blob inside the tree object uniquely determines the type the user expects of it:
+Irmin is parameterised over a user-supplied data type to be used for
+representing leaves (blobs) of the store. The blob type `b` must be passed with:
 
-1. __the user knows the high-level type structure of their store.__
+- a corresponding generic `b Type.t`, defined by hand via the `Irmin.Type`
+  combinators or via `ppx_irmin`, to allow Irmin to derive its own
+  pretty-printing, hashing and serialisation functions for `b`.
+- a merge combinator `b option Merge.t` used to resolve blob-level conflicts.
+
+With this API, all blobs in the store must have the same OCaml representation.
+This leads to unpleasant interactions when attempting to store different types
+of data in different regions of the store. In particular, we have observed two
+different issues:
+
+1. **the user knows the high-level type structure of their store.**
 
 Application constraints quite often lead to certain regions of the Irmin store
 having pre-determined type:
-   
+
 ```text
 camels/dromedary/**  # All blobs have type 'dromedary'
 camels/bacrian/**    # All blobs have type 'bactrian'
@@ -22,6 +31,7 @@ With the current API, the only thing to be done is to make a tagged union and
 
 ```ocaml
 type blob = Dromedary of dromedary | Bactrian of bactrian | Cactus of cactus
+[@@deriving irmin]
 
 let get_spike () =
   Store.get s [ "cacti"; "dangerous"; "spike" ] >|= function
@@ -34,113 +44,224 @@ let set_camelus c =
 ```
 
 This works, but has three issues
- - heavy-weight syntax;
- - forces the user to maintain their own type-safety;
- - requires serialising tags in the content-addressable heap, losing
-   opportunities for sharing. For example, `Dromedary` and `Bactrian` may have
-   the same run-time representation, but with this API they can never share
-   blobs in the content-addressable heap.
 
-A better API might have this structure:
+- heavy-weight syntax;
+- forces the user to maintain their own type-safety;
+- requires serialising tags in the content-addressable heap, losing
+  opportunities for sharing. For example, `Dromedary` and `Bactrian` may have
+  the same run-time representation, but with this API they can never share blobs
+  in the content-addressable heap.
 
-```ocaml
-let get_spike () = Store.get s (cacti / "dangerous" / "spike")
-(* path is typed to return cactuses ∴ no need to untag & assert false*)
+2. **the user knows the low-level type structure of their store.**
 
-let set_camelus c = Store.set ~info s (camels / bactrian / "camelus") c
-(* path is typed to set bactrians ∴ no need to tag *)
-```
-
-2. __the user knows the low-level type structure of their store.__
+The type of a blob may also be determined by a _suffix_ of the path used to
+access it, for example:
 
 ```text
 **/*.md     # All have type 'markdown'
 **/*.txt    # All have type 'text'
 ```
 
-Again, we can get around this at the application level by tagging our blobs withkkkkkkkkk
-
-Once again, the standard solution to this would be 
-
-These two problems are fundamentally the same
-
-The proposal effectively allows the user to canonify their
-
-## Description of proposed solution
-
-As a simplification, consider sub-trees of an Irmin store as valid Irmin stores
-in their own right (this is _almost_ true anyway, barring consideration of the
-commit graph which is global). From bottom to top, we have three tiers of API:
-
- - untyped base level (one type of tree node)
- - typed level (three types of tree node)
- - optical level
-
-Now, at the base level we have this type:
+Again, we can get around this at the application level by using a sum type for
+the blobs:
 
 ```ocaml
-type store =
-| Branch of (step * 'a store addr) list
-| Blob of bytes
+type file = Markdown of markdown | Text of text [@@deriving irmin]
+(* where `markdown` and `text` have appropriate serialisers defined *)
 
-val deref : 'a addr -> 'a
+let get_markdown name =
+  Store.get s [ "files"; (name ^ ".md") ] >|= function
+  | Markdown m -> m
+  | _ -> assert false
 ```
 
-where `addr` represents the indirection inherent in the content-addressable
-store: this `addr` might be, for example, the hash of a node paired with a
-reference to the content-addressable store that contains the node. We can begin
-introducing polymorphic parameters in the appropriate places:
+but the three above are still prevalent. In this particular example, we might
+particularly care about introducing serialised tags, since it would cause the
+`.md` files to no longer be parse-able as Markdown files when using a
+file-system backend for Irmin.
+
+## Proposed solution
+
+### Optical get/set API
+
+A better API to solve problem #1 might look like the following:
 
 ```ocaml
+let get_spike () = Store.get s (cacti / steps ["dangerous"; "spike"])
+(* path is typed to return cactuses ∴ no need to untag & assert false*)
+
+let set_camelus c = Store.set ~info s (camels / bactrian / step "camelus") c
+(* path is typed to set bactrians ∴ no need to tag *)
+```
+
+where `cacti`, `camels`, `bactrian` are some form of 'first-class projection'
+that can be used to get/set a sub-component of a complex type. Such objects are
+typically referred to as [optics][optics]. In this case, the 'complex' type is
+store as a product type defined by:
+
+```ocaml
+type camel_store = {
+  dromedary: dromedary tree;
+  bactrian: bactrian tree;
+  cacti: cactus tree
+}
+
+type desert_store = {
+  camels: camel_store
+  cacti: cactus tree
+}
+```
+
+where `'b heterogeneous_store` is a standard Irmin tree object with a single
+blob type `'b` and indexed by a sequence of 'steps' (optics over product types
+are known as '_lenses_').
+
+Similarly, we can imagine a better API for the file-system case:
+
+```ocaml
+let get_markdown name = Store.get s (step "files" / name / md)
+```
+
+This is effectively the same as what we were doing before, with two differences:
+
+- the sum type has been reified into the Irmin store (meaning that the
+  serialised blob need not contain a tag);
+
+- the assertion of the file's type is combined with the assertion that it exists
+  at the location `files/<name>.md` (saving some boilerplate code). In this
+  case, the `md` value is a 'prism' (optic for sum types) that provides a sum
+  projection (i.e. `file -> markdown option`).
+
+### Types of tree node
+
+To generalise from these examples, the proposal is to generalise from having the
+user define 'blob' types to defining the type structure of the entire store. We
+will have three types of tree object, which (might) be nested arbitrarily inside
+each other:
+
+- **'primitive' nodes** (name tbd), which provide the old behaviour of a
+  homogeneous tree with unbounded children per branch
+  (`'a tree -> string -> 'a tree`). This will be the underlying representation
+  for every store (glossing over some details about serialising tags for
+  non-suffix sum types). To the user, it appears like an abstract `tree` product
+  type with a pre-defined type combinator and lens constructor:
+
+```ocaml
+val tree : 'a Irmin.Type.t -> 'a tree Irmin.Type.t
+
+(* blob projections from a sequence of steps *)
+val steps : string list -> ('a heterogeneous_store, 'a) lens
+```
+
+- **product nodes**, defining a fixed number of components (via
+  `Irmin.Type.record`) and accessed via lenses.
+
+- **sum nodes**, defining a fixed number of cases (via `Irmin.Type.variant`) and
+  accessed via prisms.
+
+This has the advantage of easily reproducing the old behaviour as `b tree` while
+also allowing arbitrary algebraic type structure to be encoded into the Irmin
+store via generics. The old API can be preserved as a simplified `Contents`
+functor that uses `b tree` as the store type internally and hides all uses of
+optics.
+
+### Generic construction of optics
+
+It is possible to derive the necessary lenses and prisms with generics, avoiding
+introducing any additional boilerplate:
+
+```ocaml
+type +'a addr
+
+val unreturn : 'a t -> 'a
+val unbind : 'a -> ('a t -> 'b) -> 'b
 
 ```
 
+```ocaml
+type my_record = { name : string; flag : bool; count : int }
 
-- abstract `addr : * -> *` type with a supplied type combinator to allow nesting
-  stores
+let my_record, Lens.[ name; flag; count ] =  (* get the generic and the lenses *)
+  let open Type in
+  record "my_record" (fun name flag count -> { name; flag; count })
+  |+ field "name" string (fun s -> s.name)
+  |+ field "flag" bool (fun s -> s.flag)
+  |+ field "count" int (fun s -> s.count)
+  |> sealr_lens                              (* seal with lens *)
+```
 
-We have three different types of tree node at the typed tree representation,
-`map`, `sum` and `product`:
+Another (more extensive) option might be to provide optic construction for
+arbitrary generics.
 
-- `map` nodes are the same as before (string, 'a store addr) list
-- (string, )
+### Monad-parameterised optics
 
-We have two different types of trees
+A key advantage of using optics as an Irmin interface is to represent the
+indirection of the content-addressible store: accessing/updating the field of a
+'store'-d record requires access to a content-addressible heap that may have its
+own effect monad. We can provide an optics library that is parameterised over
+these effects, and then specialise them for Irmin:
 
-- __heterogeneous__ trees with __static__ structure: that is, trees such that we
-  know what
+```ocaml
+module Lens_with_effect (Effect : sig
+  type addr (* Reference / hash in the content-addressable heap *)
 
-If we have the user specify the
-  (finite) structure of their store upfront, we can give them getter and setter
-  functions (lenses) for each level of the tree that will behave in a type-safe
-  way.
-  
-- __homogeneous__ trees with __dynamic__ structure (this is really a subset
-  of the above, where the 'structure' in question is the classic recursive tree
-  datatype)
+  (* Monadic effects in the heap *)
+  type +'a io
+  val return : 'a -> 'a io
+  val bind : 'a io -> ('a -> 'b io) -> 'b io
 
-The solution is to allow these to be nested inside each other arbitrarily.
-Nesting a homogeneous tree inside a heterogeneous one solves problem (A) given
-above.
+  val deref : 'a addr -> 'a io
+  val update : 'a addr -> ('a -> 'b) -> 'b addr io
+end) =
+struct
+  open Effect
 
+  type (-'s, +'t, +'a, -'b) lens
 
-Specifically, we need to do the following:
+  (* Composition with indirection *)
+  val ( / ) :
+    ('a, 'b, 'c addr, 'd addr) lens ->
+    ('c, 'd, 'e addr, 'f addr) lens ->
+    ('a, 'b, 'e addr, 'f addr) lens
 
- - extend the type combinators in 
- 
-## Conclusion
+  (* Get/set with effect and indirection *)
+  val view : ('s, 't, 'a addr, 'b addr) t -> 's -> 'a
+  val modify : ('s, 't, 'a addr, 'b addr) t -> ('a -> 'b) -> 's -> 't io
+end
+```
 
-The two types specified above.
+There are many such constructions that achieve the same expressivity: if anyone
+has an idea of a principled way of selecting one, please let me know
+:slightly_smiling_face:
+
+### Backend-imposed restrictions
+
+Certain backends might want to impose restrictions / conventions about the type
+structure contained in the store in ways that make sense for that specific data
+representation. For example, the Git-compatible backends could restrict sum
+types to a dedicated '_extension_' lens that may only be applied at the end of
+the path.
+
+The solution should be functorised in such a way as to allow for this use-case.
+
+## Advantages
+
+- **user-defined types with shared subcomponents**. This solution provides a
+  feature that has been under discussion for inclusion in Irmin: the ability to
+  define 'structured' blob types (where internal components can be shared across
+  the content-addressible heap).
 
 ## Limitations
 
-### unable to precisely determine when access is partial
+- **runtime overhead due to generics**. Extracting a blob from a tree object
+  will now require generics, making it slower (except in the case where only
+  primitive nodes are used). As always with generics, we might expect
+  significant performance improvements with the use of multi-stage programming.
 
-This API introduces something new: certain accesses of an Irmin store may be
-__guaranteed__ to succeed, since the path from root to blob goes via no sum
-types.
+- **unable to precisely determine when access is partial**. This API introduces
+  something new: certain accesses of an Irmin store may be **guaranteed** to
+  succeed, since the path from root to blob goes via no sum types. The lens API
+  has no way to track the totality of accesses (without more powerful type-level
+  programming features made possible by https://github.com/ocaml/RFCs/pull/5).
 
-We'd love to be able to determine when the composition of multiple lenses is
-partial, so that the resulting `get` operation can return an `option` _only_
-when this is strictly necessary (i.e. the access goes via a sum type, either
-explicitly defined by the user heterogeneously).
+[optics]: https://hackage.haskell.org/package/optics-0.1/docs/Optics.html
