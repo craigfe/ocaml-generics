@@ -247,9 +247,10 @@ The solution should be functorised in such a way as to allow for this use-case.
 ## Advantages
 
 - **user-defined types with shared subcomponents**. This solution provides a
-  feature that has been under discussion for inclusion in Irmin: the ability to
-  define 'structured' blob types (where internal components can be shared across
-  the content-addressable heap).
+  feature that has been under discussion for inclusion in Irmin
+  (https://github.com/mirage/irmin/issues/478): the ability to define
+  'structured' blob types (where internal components can be shared across the
+  content-addressable heap).
 
 ## Limitations
 
