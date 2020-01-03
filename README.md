@@ -1,6 +1,8 @@
 # Generics library in OCaml
 
 Work-in-progress extensions of the [Irmin.Type][irmin-type] generics library.
+See https://github.com/mirage/irmin/issues/909 for a discussion of upstreaming
+these extensions to Irmin itself.
 
 ## TODO:
 
