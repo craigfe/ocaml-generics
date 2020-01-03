@@ -3,28 +3,32 @@ let undefined _ =
   raise Undefined
 
 module Lens = struct
-  type (-'s, +'t, +'a, -'b) t = { op : 'r. ('a -> ('b -> 'r) -> 'r) -> 's -> ('t -> 'r) -> 'r }
-(** We use an optic representation very similar to the standard 'van Laarhoven'
-encoding (based on CPS):
-
-{[
   type (-'s, +'t, +'a, -'b) t = {
     op : 'r. ('a -> ('b -> 'r) -> 'r) -> 's -> ('t -> 'r) -> 'r;
   }
-]}
+  (** We use an optic representation very similar to the standard 'van
+      Laarhoven' encoding (based on CPS):
 
-However, the above quickly breaks down when used in practice, because of the
-value restriction. In particular, the corresponding definition of [lens] is:
+      {[
+        type (-'s, +'t, +'a, -'b) t = {
+          op : 'r. ('a -> ('b -> 'r) -> 'r) -> 's -> ('t -> 'r) -> 'r;
+        }
+      ]}
 
-{[
-  let lens : type s t a b. (s -> a) -> (s -> b -> t) -> (s, t, a, b) lens =
-    fun get set ->
-      let op k this read = k (get this) (fun b -> read (set this b)) in
-      { op }
-]}
+      However, the above quickly breaks down when used in practice, because of
+      the value restriction. In particular, the corresponding definition of
+      [lens] is:
 
-@see https://stackoverflow.com/questions/29187287/sneaking-lenses-and-cps-past-the-value-restriction#comment4663665529187287
-*)
+      {[
+        let lens : type s t a b. (s -> a) -> (s -> b -> t) -> (s, t, a, b) lens
+            =
+         fun get set ->
+          let op k this read = k (get this) (fun b -> read (set this b)) in
+          { op }
+      ]}
+
+      See
+      <https://stackoverflow.com/questions/29187287/sneaking-lenses-and-cps-past-the-value-restriction#comment4663665529187287> *)
 
   type ('s, 'a) mono = ('s, 's, 'a, 'a) t
 
@@ -56,12 +60,17 @@ value restriction. In particular, the corresponding definition of [lens] is:
     }
 
   type _ t_list =
-    | ( :: ) : ('s, 't, 'a, 'b) t * 'l t_list -> (('s, 't, 'a, 'b) t * 'l) t_list
+    | ( :: ) :
+        ('s, 't, 'a, 'b) t * 'l t_list
+        -> (('s, 't, 'a, 'b) t * 'l) t_list
     | [] : unit t_list
 end
 
 module Prism = struct
-  type (-'s, +'t, +'a, -'b) t = { review : 'b -> 't; preview : 's -> ('a, 't) result }
+  type (-'s, +'t, +'a, -'b) t = {
+    review : 'b -> 't;
+    preview : 's -> ('a, 't) result;
+  }
 
   type ('s, 'a) mono = ('s, 's, 'a, 'a) t
 
@@ -69,14 +78,16 @@ module Prism = struct
 
   let ( >> ) = undefined
 
-(* f g = {
- *     review = (fun x -> f.review (g.review x));
- *     preview = (fun s -> g.preview (f.preview s)); *)
+  (* f g = {
+   *     review = (fun x -> f.review (g.review x));
+   *     preview = (fun s -> g.preview (f.preview s)); *)
   (* } *)
 
   (* Provided prisms *)
 
   type _ t_list =
-    | ( :: ) : ('s, 't, 'a, 'b) t * 'l t_list -> (('s, 't, 'a, 'b) t * 'l) t_list
+    | ( :: ) :
+        ('s, 't, 'a, 'b) t * 'l t_list
+        -> (('s, 't, 'a, 'b) t * 'l) t_list
     | [] : unit t_list
 end

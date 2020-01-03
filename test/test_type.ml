@@ -61,8 +61,3 @@ let nested_record () =
 let () =
   record ();
   nested_record ()
-
-(* Alcotest.run "index.unix"
- *   [
- *     ("io_array", record);
- *   ] *)

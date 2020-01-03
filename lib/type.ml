@@ -102,7 +102,7 @@ and ('a, 'b) case1 = {
   c1 : 'b -> 'a;
 }
 
-(* Polymorphic map over fields over a record. Sadly, without higher-kinded types
+(* Polymorphic map over fields over a record. Sadly, without higher-order type,
    we have to hand implement each one. *)
 type ('record, 'out) polyf = { f_field : 'a. ('record, 'a) field -> 'out }
 
@@ -131,104 +131,106 @@ let list elt = List elt
 
 (* Variants *)
 
-type 'a case_p = 'a case_v
+module Variant = struct
+  type 'a case_p = 'a case_v
 
-type ('a, 'b) case = int -> 'a a_case * 'b
+  type ('a, 'b) case = int -> 'a a_case * 'b
 
-let case0 cname0 c0 ctag0 =
-  let c = { ctag0; cname0; c0 } in
-  (C0 c, CV0 c)
+  let case0 cname0 c0 ctag0 =
+    let c = { ctag0; cname0; c0 } in
+    (C0 c, CV0 c)
 
-let case1 cname1 ctype1 c1 ctag1 =
-  let c = { ctag1; cname1; ctype1; c1 } in
-  (C1 c, fun v -> CV1 (c, v))
+  let case1 cname1 ctype1 c1 ctag1 =
+    let c = { ctag1; cname1; ctype1; c1 } in
+    (C1 c, fun v -> CV1 (c, v))
 
-type ('a, 'b, 'c) open_variant = 'a a_case list -> string * 'c * 'a a_case list
+  type ('a, 'b, 'c) open_variant =
+    'a a_case list -> string * 'c * 'a a_case list
 
-let variant n c vs = (n, c, vs)
+  let variant n c vs = (n, c, vs)
 
-let sealv v =
-  let vname, vget, vcases = v [] in
-  let vwit = Witness.make () in
-  let vcases = Array.of_list (List.rev vcases) in
-  Variant { vwit; vname; vcases; vget }
+  let ( |~ ) v c cs =
+    let n, fc, cs = v cs in
+    let c, f = c (List.length cs) in
+    (n, fc f, c :: cs)
 
-let ( |~ ) v c cs =
-  let n, fc, cs = v cs in
-  let c, f = c (List.length cs) in
-  (n, fc f, c :: cs)
-
-(* Records *)
-
-module Unwitnessed_record = struct
-  type ('record, 'cons, 'lens, 'lens_nil) t = {
-    name : string;
-    cons : 'cons;
-    fields : ('record, 'cons, 'lens, 'lens_nil) fields;
-  }
-
-  let v name cons fields = { name; cons; fields }
+  let sealv v =
+    let vname, vget, vcases = v [] in
+    let vwit = Witness.make () in
+    let vcases = Array.of_list (List.rev vcases) in
+    Variant { vwit; vname; vcases; vget }
 end
 
-type ('record, 'cons, 'remaining, 'lenses, 'lens_nil) open_record = {
-  open_record :
-    'hole. ('record, 'remaining, 'lens_nil, 'hole) fields ->
-    (* Append the two lens lists at the type level *)
-    ('record, 'cons, 'lenses, 'hole) Unwitnessed_record.t;
-}
+module Record = struct
+  module Unwitnessed = struct
+    type ('record, 'cons, 'lens, 'lens_nil) t = {
+      name : string;
+      cons : 'cons;
+      fields : ('record, 'cons, 'lens, 'lens_nil) fields;
+    }
 
-let field fname ftype fget = { fname; ftype; fget }
+    let v name cons fields = { name; cons; fields }
+  end
 
-let record : type r. string -> r -> ('a, r, r, 'lens_nil, 'lens_nil) open_record
-    =
- fun n r ->
-  let open_record fs = Unwitnessed_record.v n r fs in
-  { open_record }
+  type ('record, 'cons, 'remaining, 'lenses, 'lens_nil) open_record = {
+    open_record :
+      'hole. ('record, 'remaining, 'lens_nil, 'hole) fields ->
+      (* Append the two lens lists at the type level *)
+      ('record, 'cons, 'lenses, 'hole) Unwitnessed.t;
+  }
 
-let app :
-    type r c ft rem lens lens_nil.
-    (r, c, ft -> rem, lens, (r, ft) Lens.mono * lens_nil) open_record ->
-    (r, ft) field ->
-    (r, c, rem, lens, lens_nil) open_record =
- fun { open_record = previous } field ->
-  let open_record' :
-      type hole.
-      (r, rem, lens_nil, hole) fields -> (r, c, lens, hole) Unwitnessed_record.t
-      =
-   fun fs -> previous (F1 (field, fs))
-  in
-  { open_record = open_record' }
+  let field fname ftype fget = { fname; ftype; fget }
 
-(* fun { open_record = o } f -> { open_record = fun fs -> o (F1 (f, fs)) } *)
+  let record :
+      type r. string -> r -> ('a, r, r, 'lens_nil, 'lens_nil) open_record =
+   fun n r ->
+    let open_record fs = Unwitnessed.v n r fs in
+    { open_record }
 
-let sealr : type a b. (a, b, a, _, _) open_record -> a t =
- fun { open_record = r } ->
-  let Unwitnessed_record.{ name; cons; fields } = r F0 in
-  let rwit = Witness.make () in
-  Record { rwit; rname = name; rfields = Fields (fields, cons) }
-
-(* Ground constructor difference list with [record] and lens list with [unit] *)
-let sealr_lens :
-    type record cons lens.
-    (record, cons, record, lens, unit) open_record ->
-    record t * lens Lens.t_list =
- fun { open_record = r } ->
-  let Unwitnessed_record.{ name; cons; fields } = r F0 in
-  let rwit = Witness.make () in
-  let lenses =
-    let open Lens in
-    let rec inner : type a l. (record, a, l, unit) fields -> l Lens.t_list =
-      function
-      | F0 -> []
-      | F1 ({ fget; _ }, fs) ->
-          let ml = Lens.v fget (fun _ _ -> assert false) in
-          ml :: inner fs
+  let app :
+      type r c ft rem lens lens_nil.
+      (r, c, ft -> rem, lens, (r, ft) Lens.mono * lens_nil) open_record ->
+      (r, ft) field ->
+      (r, c, rem, lens, lens_nil) open_record =
+   fun { open_record = previous } field ->
+    let open_record' :
+        type hole.
+        (r, rem, lens_nil, hole) fields -> (r, c, lens, hole) Unwitnessed.t =
+     fun fs -> previous (F1 (field, fs))
     in
-    inner fields
-  in
-  (Record { rwit; rname = name; rfields = Fields (fields, cons) }, lenses)
+    { open_record = open_record' }
 
-let ( |+ ) = app
+  (* fun { open_record = o } f -> { open_record = fun fs -> o (F1 (f, fs)) } *)
+
+  let sealr : type a b. (a, b, a, _, _) open_record -> a t =
+   fun { open_record = r } ->
+    let Unwitnessed.{ name; cons; fields } = r F0 in
+    let rwit = Witness.make () in
+    Record { rwit; rname = name; rfields = Fields (fields, cons) }
+
+  (* Ground constructor difference list with [record] and lens list with [unit] *)
+  let sealr_lens :
+      type record cons lens.
+      (record, cons, record, lens, unit) open_record ->
+      record t * lens Lens.t_list =
+   fun { open_record = r } ->
+    let Unwitnessed.{ name; cons; fields } = r F0 in
+    let rwit = Witness.make () in
+    let lenses =
+      let open Lens in
+      let rec inner : type a l. (record, a, l, unit) fields -> l Lens.t_list =
+        function
+        | F0 -> []
+        | F1 ({ fget; _ }, fs) ->
+            let ml = Lens.v fget (fun _ _ -> assert false) in
+            ml :: inner fs
+      in
+      inner fields
+    in
+    (Record { rwit; rname = name; rfields = Fields (fields, cons) }, lenses)
+
+  let ( |+ ) = app
+end
 
 (* Generic functions *)
 
@@ -281,3 +283,6 @@ let rec pp : type a. a t -> a Fmt.t =
 let hash = undefined
 
 let to_string typ = Fmt.str "%a" (pp typ)
+
+include Record
+include Variant

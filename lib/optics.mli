@@ -11,9 +11,11 @@ module Lens : sig
         focused transformation that produces the necessary output type 't. *)
 
   type _ t_list =
-    | ( :: ) : ('s, 't, 'a, 'b) t * 'l t_list -> (('s, 't, 'a, 'b) t * 'l) t_list
+    | ( :: ) :
+        ('s, 't, 'a, 'b) t * 'l t_list
+        -> (('s, 't, 'a, 'b) t * 'l) t_list
     | [] : unit t_list
-  (** Convenient syntax for a heterogeneous list of lenses. *)
+        (** Convenient syntax for a heterogeneous list of lenses. *)
 
   type ('s, 'a) mono = ('s, 's, 'a, 'a) t
   (** The type of monomorphic lenses (lenses such that the internal transform is
@@ -50,13 +52,16 @@ module Prism : sig
   type (-'s, +'t, +'a, -'b) t
   (** The type of prisms.
 
-  The prism is the categorical dual of the lens (it operates on sum types where
-  lenses operate on product types). As such, the access function is non-total *)
+      The prism is the categorical dual of the lens (it operates on sum types
+      where lenses operate on product types). As such, the access function is
+      non-total *)
 
   type ('s, 'a) mono = ('s, 's, 'a, 'a) t
 
   type _ t_list =
-    | ( :: ) : ('s, 't, 'a, 'b) t * 'l t_list -> (('s, 't, 'a, 'b) t * 'l) t_list
+    | ( :: ) :
+        ('s, 't, 'a, 'b) t * 'l t_list
+        -> (('s, 't, 'a, 'b) t * 'l) t_list
     | [] : unit t_list
 
   val v : ('b -> 't) -> ('s -> ('a, 't) result) -> ('s, 't, 'a, 'b) t

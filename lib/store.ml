@@ -1,51 +1,91 @@
-(* Type level Booleans *)
 let undefined _ = assert false
-
-type ttrue = |
-
-type tfalse = |
 
 type ('k, 'v) map = ('k, 'v) Hashtbl.t
 
-type ('k, 'v) heap = ('k, 'v) Hashtbl.t
-
 type ('a, 'b) bijection = { inj : 'a -> 'b; surj : 'b -> 'a }
+
+(** Capability-indexed heap effects *)
+module type IO = sig
+  type (+'a, 'cap) t
+
+  val return : 'a -> ('a, 'cap) t
+
+  val bind : ('a, 'cap) t -> ('a -> ('b, 'cap) t) -> ('b, 'cap) t
+end
+
+module Identity = struct
+  type (+'a, 'cap) t = 'a
+
+  let return x = x
+
+  let bind x f = f x
+end
 
 (** Content-addressable heap *)
 
-module Heap : sig
-  type ('tree, 'blob) t
+module Heap = struct
+  module type S = sig
+    type ('hash, 'elt) t
 
-  type ('tree, 'blob, 'a) addr
+    type (+'a, 'cap) io
 
-  val get : ('tree, 'blob) t -> ('tree, 'blob, 'a) addr -> 'a
+    val v : ('elt -> 'hash) -> ('hash, 'elt) t
 
-  val mk_blob_addr : ('tree, 'blob) t -> 'blob -> ('tree, 'blob, 'blob) addr
+    val get : ('hash, 'elt) t -> 'hash -> ('elt, [ `Read ]) io
 
-  val mk_tree_addr : ('tree, 'blob) t -> 'tree -> ('tree, 'blob, 'tree) addr
-end = struct
-  type hash = string
+    val add : ('hash, 'elt) t -> 'elt -> ('hash, [ `Write ]) io
+  end
 
-  type ('tree, 'blob, _) addr =
-    | Tree : hash -> ('tree, 'blob, 'tree) addr
-    | Blob : hash -> ('tree, 'blob, 'blob) addr
+  module Make (IO : IO) : S with type (+'a, 'cap) io := ('a, 'cap) IO.t = struct
+    type ('hash, 'elt) t = {
+      hashfn : 'elt -> 'hash;
+      tbl : ('hash, 'elt) Hashtbl.t;
+    }
 
-  type ('tree, 'blob) t = {
-    tree_hash : 'tree -> hash;
-    blob_hash : 'blob -> hash;
-    tree_heap : (hash, 'tree) Hashtbl.t;
-    blob_heap : (hash, 'blob) Hashtbl.t;
-  }
+    let v hashfn = { hashfn; tbl = Hashtbl.create 0 }
 
-  let get : type a tree blob. (tree, blob) t -> (tree, blob, a) addr -> a =
-   fun { tree_heap; blob_heap; _ } -> function
-    | Tree t -> Hashtbl.find tree_heap t
-    | Blob b -> Hashtbl.find blob_heap b
+    let get { tbl; _ } a = Hashtbl.find tbl a |> IO.return
 
-  let mk_blob_addr { blob_hash; _ } b = Blob (blob_hash b)
-
-  let mk_tree_addr { tree_hash; _ } t = Tree (tree_hash t)
+    let add { tbl; hashfn } e =
+      let addr = hashfn e in
+      Hashtbl.add tbl addr e;
+      IO.return addr
+  end
 end
+
+(* module Heap : sig
+ *   type ('tree, 'blob) t
+ * 
+ *   type ('tree, 'blob, 'a) addr
+ * 
+ *   val get : ('tree, 'blob) t -> ('tree, 'blob, 'a) addr -> 'a
+ * 
+ *   val mk_blob_addr : ('tree, 'blob) t -> 'blob -> ('tree, 'blob, 'blob) addr
+ * 
+ *   val mk_tree_addr : ('tree, 'blob) t -> 'tree -> ('tree, 'blob, 'tree) addr
+ * end = struct
+ *   type hash = string
+ * 
+ *   type ('tree, 'blob, _) addr =
+ *     | Tree : hash -> ('tree, 'blob, 'tree) addr
+ *     | Blob : hash -> ('tree, 'blob, 'blob) addr
+ * 
+ *   type ('tree, 'blob) t = {
+ *     tree_hash : 'tree -> hash;
+ *     blob_hash : 'blob -> hash;
+ *     tree_heap : (hash, 'tree) Hashtbl.t;
+ *     blob_heap : (hash, 'blob) Hashtbl.t;
+ *   }
+ * 
+ *   let get : type a tree blob. (tree, blob) t -> (tree, blob, a) addr -> a =
+ *    fun { tree_heap; blob_heap; _ } -> function
+ *     | Tree t -> Hashtbl.find tree_heap t
+ *     | Blob b -> Hashtbl.find blob_heap b
+ * 
+ *   let mk_blob_addr { blob_hash; _ } b = Blob (blob_hash b)
+ * 
+ *   let mk_tree_addr { tree_hash; _ } t = Tree (tree_hash t)
+ * end *)
 
 module Homo_store : sig
   (* content addressable store -- hashing a value gives us access to it's address in the store *)
@@ -72,35 +112,31 @@ module Homo_store : sig
   val get : 'step list -> ('value, 'step, _, _) t -> 'value option
 
   (* optional because the path may not exist, or may end in a sub-tree *)
-
   val set :
     'step list ->
     'value ->
     ('value, 'step, 'hash, 'blob) t ->
     ('value, 'step, 'hash, 'blob) t
 end = struct
+  module Heap = Heap.Make (Identity)
+
   type ('value, 'step, 'hash, 'blob) t =
     ('value, 'step, 'hash, 'blob) meta * ('value, 'step, 'hash, 'blob) node
 
   and ('value, 'step, 'hash, 'blob) node =
     | Tree of ('step, 'hash) map
-    (* This map is mutable, when we actually want an immutable one... *)
     | Blob of 'value
 
   and ('value, 'step, 'hash, 'blob) meta = {
     hashfn : ('value, 'step, 'hash, 'blob) node -> 'hash;
     serialise : ('value, 'blob) bijection;
-    heap : ('hash, ('value, 'step, 'hash, 'blob) node) map ref;
-        (* must be a ref because we want substores to be valid stores, but they
-    share the same heap. *)
+    heap : ('hash, ('value, 'step, 'hash, 'blob) node) Heap.t ref; (* TODO: remove ref *)
   }
 
   let v_node () = Hashtbl.create 0
 
-  let v_heap () = ref (Hashtbl.create 0)
-
   let v hashfn serialise =
-    let heap = v_heap () in
+    let heap = ref (Heap.v hashfn) in
     let node = v_node () in
     ({ hashfn; serialise; heap }, Tree node)
 
@@ -111,7 +147,7 @@ end = struct
     | _ :: _, Blob _ -> None
     | [], Blob b -> Some b
     | step :: steps, Tree children ->
-        let next = step |> Hashtbl.find children |> Hashtbl.find !(meta.heap) in
+        let next = step |> Hashtbl.find children |> Heap.get !(meta.heap) in
         get steps (meta, next)
 
   let set :
@@ -131,23 +167,20 @@ end = struct
       match (steps, node) with
       | [], _ ->
           let blob_node = Blob v in
-          let hash = meta.hashfn blob_node in
-          Hashtbl.add !(meta.heap) hash blob_node;
+          let hash = Heap.add !(meta.heap) blob_node in
           (blob_node, hash)
       | s :: ss, Tree children ->
           let child_hash = Hashtbl.find children s in
-          let child = Hashtbl.find !(meta.heap) child_hash in
+          let child = Heap.get !(meta.heap) child_hash in
           let _, child_hash = aux ss child in
 
           (* Update to the new child *)
           Hashtbl.replace children s child_hash;
 
           (* Re-hash the node *)
-          let node = Tree children in
-          let hash = meta.hashfn node in
-
           (* Put the new tree object in the heap *)
-          Hashtbl.add !(meta.heap) hash node;
+          let node = Tree children in
+          let hash = Heap.add !(meta.heap) node in
 
           (node, hash)
       | (_ :: _ as steps), Blob _ ->
@@ -157,17 +190,19 @@ end = struct
     (meta, fst (aux s node))
 end
 
-(* Testing *)
-
-(* type 'a homo_store = unit
+(* module Hetero_store : sig
+ *   type 'typ t
  * 
- * let hs : 'a Type.t -> 'a homo_store Type.t = undefined *)
-
-(* type hetero_store = {
- *   name : string homo_store;
- *   tmp : bytes homo_store;
- *   context : int homo_store;
- * } *)
+ *   type +'v addr
+ * 
+ *   val get : ('typ, 'v addr) Optics.Lens.mono -> 'typ t -> 'v option io
+ * end = struct
+ *   type 'typ t
+ * 
+ *   type addr
+ * 
+ *   let get = undefined
+ * end *)
 
 type hetero_store = { name : string; tmp : bytes; context : int }
 
