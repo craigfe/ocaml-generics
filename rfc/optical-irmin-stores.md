@@ -112,9 +112,9 @@ type desert_store = {
 }
 ```
 
-where `'b heterogeneous_store` is a standard Irmin tree object with a single
-blob type `'b` and indexed by a sequence of 'steps' (optics over product types
-are known as '_lenses_').
+where `'b tree` is a standard Irmin tree object with a single blob type `'b` and
+indexed by a sequence of 'steps' (optics over product types are known as
+'_lenses_').
 
 Similarly, we can imagine a better API for the file-system case:
 
@@ -196,8 +196,8 @@ arbitrary generics.
 ### Monad-parameterised optics
 
 A key advantage of using optics as an Irmin interface is to represent the
-indirection of the content-addressible store: accessing/updating the field of a
-'store'-d record requires access to a content-addressible heap that may have its
+indirection of the content-addressable store: accessing/updating the field of a
+'store'-d record requires access to a content-addressable heap that may have its
 own effect monad. We can provide an optics library that is parameterised over
 these effects, and then specialise them for Irmin:
 
@@ -249,7 +249,7 @@ The solution should be functorised in such a way as to allow for this use-case.
 - **user-defined types with shared subcomponents**. This solution provides a
   feature that has been under discussion for inclusion in Irmin: the ability to
   define 'structured' blob types (where internal components can be shared across
-  the content-addressible heap).
+  the content-addressable heap).
 
 ## Limitations
 
