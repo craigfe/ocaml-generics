@@ -276,12 +276,8 @@ module type STORE = sig
 
   (** Interactions with the store **)
 
-  val modify :
-    info:Info.f ->
-    t ->
-    (contents, 'a) optic ->
-    ('a -> 'a) ->
-    (t, write_error) result Lwt.t
+  val modify : info:Info.f -> t -> (contents, 'a) optic -> ('a -> 'a) -> (t, write_error) result Lwt.t
+  val set :    info:Info.f -> t -> (contents, 'a) optic ->        'a  -> (t, write_error) result Lwt.t
 
   val merge :
     info:Info.f ->
