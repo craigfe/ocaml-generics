@@ -103,7 +103,6 @@ store as a product type defined by:
 type camel_store = {
   dromedary: dromedary tree;
   bactrian: bactrian tree;
-  cacti: cactus tree
 }
 
 type desert_store = {
@@ -165,34 +164,6 @@ store via generics. The old API can be preserved as a simplified `Contents`
 functor that uses `b tree` as the store type internally and hides all uses of
 optics.
 
-### Generic construction of optics
-
-It is possible to derive the necessary lenses and prisms with generics, avoiding
-introducing any additional boilerplate:
-
-```ocaml
-type +'a addr
-
-val unreturn : 'a t -> 'a
-val unbind : 'a -> ('a t -> 'b) -> 'b
-
-```
-
-```ocaml
-type my_record = { name : string; flag : bool; count : int }
-
-let my_record, Lens.[ name; flag; count ] =  (* get the generic and the lenses *)
-  let open Type in
-  record "my_record" (fun name flag count -> { name; flag; count })
-  |+ field "name" string (fun s -> s.name)
-  |+ field "flag" bool (fun s -> s.flag)
-  |+ field "count" int (fun s -> s.count)
-  |> sealr_lens                              (* seal with lens *)
-```
-
-Another (more extensive) option might be to provide optic construction for
-arbitrary generics.
-
 ### Monad-parameterised optics
 
 A key advantage of using optics as an Irmin interface is to represent the
@@ -234,6 +205,37 @@ There are many such constructions that achieve the same expressivity: if anyone
 has an idea of a principled way of selecting one, please let me know
 :slightly_smiling_face:
 
+### Generic construction of optics
+
+It is possible to derive the necessary lenses and prisms with generics, avoiding
+introducing any additional boilerplate:
+
+```ocaml
+open Type
+
+(* First example -- defining generics by hand *)
+let camel_store, Lens.[ dromedary; bactrian ] = (* Get the generic and the lenses *)
+  record "camel_store" (fun dromedary bacrian -> { dromedary; bactrian })
+  |+ field "dromedary" (tree dromedary) (fun s -> s.dromedary)
+  |+ field "bactrian" (tree bactrian) (fun s -> s.bactrian)
+  |> sealr_lens                                        (* Seal with lens *)
+
+let desert_store, Lens.[ camels; cacti ] =
+  record "desert_store" (fun dromedary bacrian -> { dromedary; bactrian })
+  |+ field "camels" camel_store (fun s -> s.dromedary)
+  |+ field "cacti" (tree cactus) (fun s -> s.bactrian)
+  |> sealr_lens
+
+module Contents = struct
+  type t = desert_store
+  let t = desert_store
+  let merge = undefined
+end
+```
+
+Another (more extensive) option might be to provide optic construction for
+arbitrary generics.
+
 ### Backend-imposed restrictions
 
 Certain backends might want to impose restrictions / conventions about the type
@@ -243,6 +245,76 @@ types to a dedicated '_extension_' lens that may only be applied at the end of
 the path.
 
 The solution should be functorised in such a way as to allow for this use-case.
+
+```ocaml
+(* Second example -- using PPX for generics
+
+   The exact API here would depend on how we decide to specialise the optic
+   interface in order to allow the user to control the FS layout precisely. Here
+   I assume a sum type with annotated correspondences to file-names. *)
+
+type file =
+  | Markdown of markdown [@file "*.md"]
+  | Text of text [@file "*.txt"]
+[@@deriving irmin]
+
+module Contents = struct
+  type t = file tree
+  let t = tree file
+  let merge = undefined
+end
+```
+
+### The big picture
+
+Disregarding backend-specific specialisations, the new API might look something
+like this:
+
+```ocaml
+module type STORE = sig
+  type contents (** user-defined top-level store type *)
+
+  (** Interactions with the store **)
+
+  val modify :
+    info:Info.f ->
+    t ->
+    (contents, 'a) optic ->
+    ('a -> 'a) ->
+    (t, write_error) result Lwt.t
+
+  val merge :
+    info:Info.f ->
+    t ->
+    ?old:'a ->
+    (contents, 'a) optic ->
+    'a option ->
+    (t, write_error) result Lwt.t
+
+  val get : t -> (contents, 'a) optic -> 'a option Lwt.t
+
+  (* NOTE: we no longer need `*_tree` variants, since these are simply instances
+     of optics provided by Tree (below). *)
+end
+```
+
+We need to provide a new API for homogeneous trees too:
+
+```ocaml
+module type TREE = sig
+  type +'a t (** homogeneous trees with blob type 'a *)
+  type step  (** user-defined step type *)
+
+  val t : 'a Irmin.Type.t -> 'a t Irmin.Type.t
+
+  (* Low-level optics *)
+  val step : step -> ('a t, 'a t) optic
+  val blob : ('a t, 'a) optic
+
+  val steps : string -> ('a t, 'a) optic
+  (** [steps [s1; s2; s3]] is (step s1 / step s2 / step s3 / blob) *)
+end
+```
 
 ## Advantages
 
