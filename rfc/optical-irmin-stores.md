@@ -174,13 +174,14 @@ these effects, and then specialise them for Irmin:
 
 ```ocaml
 module Lens_with_effect (Effect : sig
-  type addr (* Reference / hash in the content-addressable heap *)
 
   (* Monadic effects in the heap *)
   type +'a io
   val return : 'a -> 'a io
   val bind : 'a io -> ('a -> 'b io) -> 'b io
 
+  (* Reference / hash in the content-addressable heap *)
+  type +'a addr
   val deref : 'a addr -> 'a io
   val update : 'a addr -> ('a -> 'b) -> 'b addr io
 end) =
@@ -196,7 +197,7 @@ struct
     ('a, 'b, 'e addr, 'f addr) lens
 
   (* Get/set with effect and indirection *)
-  val view : ('s, 't, 'a addr, 'b addr) t -> 's -> 'a
+  val view : ('s, 't, 'a addr, 'b addr) t -> 's -> 'a io
   val modify : ('s, 't, 'a addr, 'b addr) t -> ('a -> 'b) -> 's -> 't io
 end
 ```
